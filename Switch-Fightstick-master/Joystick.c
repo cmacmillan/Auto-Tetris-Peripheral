@@ -117,14 +117,15 @@ void EVENT_USB_Device_ControlRequest(void)
 typedef enum
 {
 	SYNC_CONTROLLER,
-	ENTER_FROM_MAIN_MENU,
-	SELECT_CHARACTER,
+	READ_INPUT,
+	//ENTER_FROM_MAIN_MENU,
+	//SELECT_CHARACTER,
 	//SYNC_POSITION,
 	//STOP_X,
 	//STOP_Y,
 	//MOVE_X,
 	//MOVE_Y,
-	DONE
+	DONE,
 } State_t;
 State_t state = SYNC_CONTROLLER;
 
@@ -191,6 +192,11 @@ void HID_Task(void)
 	}
 }
 
+int spinsToRight=0;
+int movesToMake=0;
+bool isPieceActive=false;
+int framesToWait=0;
+const int FRAME_DELAY =2;
 // Prepare the next report for the host.
 void GetNextReport(USB_JoystickReport_Input_t *const ReportData)
 {
@@ -211,137 +217,55 @@ void GetNextReport(USB_JoystickReport_Input_t *const ReportData)
 		return;
 	}
 
-	// States and moves management
-	switch (state)
-	{
-
-	case SYNC_CONTROLLER:
-		if (report_count > 100)
+		//Serial_SendByte(0x01);
+		int16_t DataByte = Serial_ReceiveByte();
+		if (DataByte != -1)
 		{
-			report_count = 0;
-			//state = ENTER_FROM_MAIN_MENU; //SYNC_POSITION;
-			state = SELECT_CHARACTER;
-		}
-		else if (report_count == 25 || report_count == 50)
-		{
-			ReportData->Button |= SWITCH_L | SWITCH_R;
-		}
-		else if (report_count == 75 || report_count == 100)
-		{
-			if (report_count % 2 == 0)
-			{
+			//10 possible rows so 4 bits
+			//4 orientations so 2 bits
+			//A button so 1 bit
+        	//orientation offsetSign mag
+			if ((DataByte>>7)&1){
 				ReportData->Button |= SWITCH_A;
+			} else {
+				movesToMake = (DataByte&7);//3 magnitude
+				movesToMake = (DataByte&8)?-movesToMake:movesToMake;// 1000
+				spinsToRight = (DataByte>>4)&3;//3=11
+				isPieceActive=true;
 			}
 		}
-		report_count++;
-		break;
-	case ENTER_FROM_MAIN_MENU:
-		if (report_count > 500)
-		{
-			report_count = 0;
-			state = SELECT_CHARACTER;
-			Serial_SendByte(0x11);
+		if (framesToWait>0){
+			framesToWait--;
 		}
-		else
+		else {
+		if (isPieceActive)
 		{
-			if (report_count % 2 == 0)
+			if (spinsToRight > 0)
 			{
-				ReportData->Button |= SWITCH_A;
+				ReportData->Button |= SWITCH_Y;
+				framesToWait = FRAME_DELAY;
+				spinsToRight--;
 			}
-		}
-		report_count++;
-		break;
-	case SELECT_CHARACTER:
-		/*if (report_count > 21)
-		{
-			//int report_countMod = report_count % 10;
-			if (report_count % 2 == 0)
+			else if (movesToMake > 0)
 			{
-				ReportData->LY = STICK_MAX;
+				ReportData->HAT = HAT_LEFT;
+				framesToWait = FRAME_DELAY;
+				movesToMake--;
 			}
-			else
+			else if (movesToMake < 0)
 			{
-				ReportData->LY = STICK_CENTER;
+				ReportData->HAT = HAT_RIGHT;
+				framesToWait = FRAME_DELAY;
+				movesToMake++;
+			}
+			else if (spinsToRight ==0){
+				ReportData->HAT = HAT_TOP;
+				//framesToWait = FRAME_DELAY;
+				isPieceActive=false;
 			}
 		}
-		else*/
-		if (report_count == 1000)
-		{
-			Serial_SendByte(0x12);
-			ReportData->Button |= SWITCH_PLUS;
 		}
-		else if (report_count == 20)
-		{
-			ReportData->Button |= SWITCH_A;
-		}
-		else
-		{
-			ReportData->LY = STICK_MIN;
-		}
-		report_count++;
-		break;
-	/*case SYNC_POSITION:
-		if (report_count == 250)
-		{
-			report_count = 0;
-			xpos = 0;
-			ypos = 0;
-			state = STOP_X;
-		}
-		else
-		{
-			// Moving faster with LX/LY
-			ReportData->LX = STICK_MIN;
-			ReportData->LY = STICK_MIN;
-		}
-		if (report_count == 75 || report_count == 150)
-		{
-			// Clear the screen
-			ReportData->Button |= SWITCH_MINUS;
-		}
-		report_count++;
-		break;
-	case STOP_X:
-		state = MOVE_X;
-		break;
-	case STOP_Y:
-		if (ypos < 120 - 1)
-			state = MOVE_Y;
-		else
-			state = DONE;
-		break;
-	case MOVE_X:
-		if (ypos % 2)
-		{
-			ReportData->HAT = HAT_LEFT;
-			xpos--;
-		}
-		else
-		{
-			ReportData->HAT = HAT_RIGHT;
-			xpos++;
-		}
-		if (xpos > 0 && xpos < 320 - 1)
-			state = STOP_X;
-		else
-			state = STOP_Y;
-		break;
-	case MOVE_Y:
-		ReportData->HAT = HAT_BOTTOM;
-		ypos++;
-		state = STOP_X;
-		break;*/
-	case DONE:
-#ifdef ALERT_WHEN_DONE
-		portsval = ~portsval;
-		PORTD = portsval; //flash LED(s) and sound buzzer if attached
-		PORTB = portsval;
-		_delay_ms(250);
-#endif
-		return;
-	}
 
-	// Inking
 	/*if (state != SYNC_CONTROLLER && state != SYNC_POSITION)
 		if (pgm_read_byte(&(image_data[(xpos / 8) + (ypos * 40)])) & 1 << (xpos % 8))
 			ReportData->Button |= SWITCH_A;*/
