@@ -154,9 +154,12 @@ void HID_Task(void)
 		if (Endpoint_IsReadWriteAllowed())
 		{
 			// We'll create a place to store our data received from the host.
-			USB_JoystickReport_Output_t JoystickOutputData;
+			// ---I commented this--- USB_JoystickReport_Output_t JoystickOutputData;
+			uint8_t test[7];
+
 			// We'll then take in that data, setting it up in our storage.
-			while (Endpoint_Read_Stream_LE(&JoystickOutputData, sizeof(JoystickOutputData), NULL) != ENDPOINT_RWSTREAM_NoError)
+			// ---I commented this--- while (Endpoint_Read_Stream_LE(&JoystickOutputData, sizeof(JoystickOutputData), NULL) != ENDPOINT_RWSTREAM_NoError)
+			while (Endpoint_Read_Stream_LE(&test, sizeof(test), NULL) != ENDPOINT_RWSTREAM_NoError)
 				;
 			// At this point, we can react to this data.
 			/*if (JoystickOutputData.RY > 0 || JoystickOutputData.Button > 0)
@@ -196,7 +199,8 @@ int spinsToRight=0;
 int movesToMake=0;
 bool isPieceActive=false;
 int framesToWait=0;
-const int FRAME_DELAY =2;
+bool Lbutton=false;
+const int FRAME_DELAY =3;
 // Prepare the next report for the host.
 void GetNextReport(USB_JoystickReport_Input_t *const ReportData)
 {
@@ -216,61 +220,105 @@ void GetNextReport(USB_JoystickReport_Input_t *const ReportData)
 		echoes--;
 		return;
 	}
-
 		//Serial_SendByte(0x01);
-		int16_t DataByte = Serial_ReceiveByte();
-		if (DataByte != -1)
-		{
-			//10 possible rows so 4 bits
-			//4 orientations so 2 bits
-			//A button so 1 bit
-        	//orientation offsetSign mag
-			if ((DataByte>>7)&1){
-				ReportData->Button |= SWITCH_A;
-			} else {
-				movesToMake = (DataByte&7);//3 magnitude
-				movesToMake = (DataByte&8)?-movesToMake:movesToMake;// 1000
-				spinsToRight = (DataByte>>4)&3;//3=11
-				isPieceActive=true;
+
+		//if (!isPieceActive)
+		//{
+			int16_t DataByte = Serial_ReceiveByte();
+			if (DataByte != -1)
+			{
+				//while(Serial_ReceiveByte()!=-1);
+				//10 possible rows so 4 bits
+				//4 orientations so 2 bits
+				//A button so 1 bit
+				//L button so 1 big
+				//So final byte is A button, L button,2 bits for orientation, 1 bit for direction, 3 bits for direction
+				//orientation offsetSign mag
+				if ((DataByte >> 7) & 1)
+				{
+					if (DataByte&1){
+						ReportData->Button |= SWITCH_A;
+					}
+					if (DataByte&2){
+						ReportData->RX = STICK_MIN;
+					}
+					if (DataByte&4){
+						ReportData->RX = STICK_MAX;
+					}
+					if (DataByte&8){
+						ReportData->RY = STICK_MIN;
+					}
+					if (DataByte&16){
+						ReportData->RY = STICK_MAX;
+					}
+				}
+				else
+				{
+					Lbutton = (DataByte & (1 << 6));
+					movesToMake = (DataByte & 7);							   //3 magnitude
+					movesToMake = (DataByte & 8) ? -movesToMake : movesToMake; // 1000
+					spinsToRight = (DataByte >> 4) & 3;						   //3=11
+					framesToWait = 5;
+					isPieceActive = true;
+				}
 			}
-		}
-		if (framesToWait>0){
-			framesToWait--;
-		}
-		else {
+		//}
+		//else
 		if (isPieceActive)
 		{
-			if (spinsToRight > 0)
+			if (framesToWait > 0)
 			{
-				ReportData->Button |= SWITCH_Y;
-				framesToWait = FRAME_DELAY;
-				spinsToRight--;
+				framesToWait--;
 			}
-			else if (movesToMake > 0)
+			else
 			{
-				ReportData->HAT = HAT_LEFT;
-				framesToWait = FRAME_DELAY;
-				movesToMake--;
+				if (Lbutton)
+				{
+					ReportData->Button |= SWITCH_L;
+					framesToWait = FRAME_DELAY;
+					Lbutton = false;
+				}
+				else if (spinsToRight > 0)
+				{
+					if (spinsToRight == 3)
+					{
+						ReportData->Button |= SWITCH_X;
+						framesToWait = FRAME_DELAY;
+						spinsToRight = 0;
+					}
+					else
+					{
+						ReportData->Button |= SWITCH_Y;
+						framesToWait = FRAME_DELAY;
+						spinsToRight--;
+					}
+				}
+				else if (movesToMake > 0)
+				{
+					ReportData->HAT = HAT_LEFT;
+					framesToWait = FRAME_DELAY;
+					movesToMake--;
+				}
+				else if (movesToMake < 0)
+				{
+					ReportData->HAT = HAT_RIGHT;
+					framesToWait = FRAME_DELAY;
+					movesToMake++;
+				}
+				else if (spinsToRight == 0)
+				{
+					ReportData->HAT = HAT_TOP;
+					framesToWait = FRAME_DELAY;
+					isPieceActive = false;
+				}
 			}
-			else if (movesToMake < 0)
-			{
-				ReportData->HAT = HAT_RIGHT;
-				framesToWait = FRAME_DELAY;
-				movesToMake++;
-			}
-			else if (spinsToRight ==0){
-				ReportData->HAT = HAT_TOP;
-				//framesToWait = FRAME_DELAY;
-				isPieceActive=false;
-			}
-		}
 		}
 
-	/*if (state != SYNC_CONTROLLER && state != SYNC_POSITION)
+		/*if (state != SYNC_CONTROLLER && state != SYNC_POSITION)
 		if (pgm_read_byte(&(image_data[(xpos / 8) + (ypos * 40)])) & 1 << (xpos % 8))
 			ReportData->Button |= SWITCH_A;*/
 
-	// Prepare to echo this report
-	memcpy(&last_report, ReportData, sizeof(USB_JoystickReport_Input_t));
-	echoes = ECHOES;
+		// Prepare to echo this report
+		memcpy(&last_report, ReportData, sizeof(USB_JoystickReport_Input_t));
+		echoes = ECHOES;
 }
